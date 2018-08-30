@@ -1,6 +1,7 @@
 pragma solidity ^0.4.24;
 
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
+import "zos-lib/contracts/migrations/Initializable.sol";
 import "./ERC20.sol";
 import "./freezable.sol";
 import "./CstLedger.sol";
@@ -8,38 +9,33 @@ import "./ExternalStorage.sol";
 import "./Registry.sol";
 import "./CstLibrary.sol";
 import "./displayable.sol";
-import "./upgradeable.sol";
 import "./configurable.sol";
 import "./storable.sol";
 
-contract CardStackToken is ERC20,
+contract CardstackToken is ERC20,
+                           Initializable,
                            freezable,
                            displayable,
-                           upgradeable,
                            configurable,
                            IStorable {
 
   using SafeMath for uint256;
   using CstLibrary for address;
 
+  /* zOS requires that the variables are never removed nor order changed
+  /* BEGIN VARIABLES */
+  uint8 public constant decimals = 18;
+  string public constant version = "3";
+  uint256 public constant tokenMaxCap = 6000000000000000000000000000; // 6 billion * 10^18
+
   ITokenLedger public tokenLedger;
   string public storageName;
   string public ledgerName;
   address public externalStorage;
   address public registry;
-  uint8 public constant decimals = 18;
-  bool public isTokenContract = true;
   bool public haltPurchase;
-
-  // This state is specific to the first version of the CST
-  // token contract and the token generation event, and hence
-  // there is no reason to persist in external storage for
-  // future contracts.
-  bool public allowTransfers;
-  mapping (address => bool) public whitelistedTransferer;
-  address[] public whitelistedTransfererForIndex;
-  mapping (address => bool) private processedWhitelistedTransferer;
   uint256 public contributionMinimum;
+  /* END VARIABLES */
 
   event Mint(uint256 amountMinted, uint256 totalTokens, uint256 circulationCap);
   event Approval(address indexed _owner,
@@ -73,20 +69,16 @@ contract CardStackToken is ERC20,
     _;
   }
 
-  constructor(address _registry, string _storageName, string _ledgerName) public payable {
-    isTokenContract = true;
-    version = "2";
+  function initialize(address _registry, string _storageName, string _ledgerName) onlyInitializers isInitializer public {
     require(_registry != address(0));
+
+    initializeAdmins();
+
     storageName = _storageName;
     ledgerName = _ledgerName;
     registry = _registry;
 
     addSuperAdmin(registry);
-  }
-
-  /* This unnamed function is called whenever someone tries to send ether directly to the token contract */
-  function () public {
-    revert(); // Prevents accidental sending of ether
   }
 
   function getLedgerNameHash() external view returns (bytes32) {
@@ -121,12 +113,12 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function configureFromStorage() public onlySuperAdmins unlessUpgraded initStorage returns (bool) {
+  function configureFromStorage() public onlySuperAdmins initStorage returns (bool) {
     freezeToken(true);
     return true;
   }
 
-  function updateStorage(string newStorageName, string newLedgerName) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function updateStorage(string newStorageName, string newLedgerName) public onlySuperAdmins returns (bool) {
     require(frozenToken);
 
     storageName = newStorageName;
@@ -140,27 +132,27 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function name() public view unlessUpgraded returns(string) {
+  function name() public view returns(string) {
     return bytes32ToString(externalStorage.getTokenName());
   }
 
-  function symbol() public view unlessUpgraded returns(string) {
+  function symbol() public view returns(string) {
     return bytes32ToString(externalStorage.getTokenSymbol());
   }
 
-  function totalInCirculation() public view unlessUpgraded returns(uint256) {
+  function totalInCirculation() public view returns(uint256) {
     return tokenLedger.totalInCirculation().add(totalUnvestedAndUnreleasedTokens());
   }
 
-  function cstBalanceLimit() public view unlessUpgraded returns(uint256) {
+  function cstBalanceLimit() public view returns(uint256) {
     return externalStorage.getBalanceLimit();
   }
 
-  function buyPrice() public view unlessUpgraded returns(uint256) {
+  function buyPrice() public view returns(uint256) {
     return externalStorage.getBuyPrice();
   }
 
-  function circulationCap() public view unlessUpgraded returns(uint256) {
+  function circulationCap() public view returns(uint256) {
     return externalStorage.getCirculationCap();
   }
 
@@ -170,15 +162,15 @@ contract CardStackToken is ERC20,
     return externalStorage.getFoundation();
   }
 
-  function totalSupply() public view unlessUpgraded returns(uint256) {
+  function totalSupply() public view returns(uint256) {
     return tokenLedger.totalTokens();
   }
 
-  function tokensAvailable() public view unlessUpgraded returns(uint256) {
+  function tokensAvailable() public view returns(uint256) {
     return totalSupply().sub(totalInCirculation());
   }
 
-  function balanceOf(address account) public view unlessUpgraded returns (uint256) {
+  function balanceOf(address account) public view returns (uint256) {
     address thisAddress = this;
     if (thisAddress == account) {
       return tokensAvailable();
@@ -187,10 +179,8 @@ contract CardStackToken is ERC20,
     }
   }
 
-  function transfer(address recipient, uint256 amount) public unlessFrozen unlessUpgraded returns (bool) {
-    require(allowTransfers || whitelistedTransferer[msg.sender]);
-    require(amount > 0);
-    require(!frozenAccount[recipient]);
+  function transfer(address recipient, uint256 amount) public unlessFrozen returns (bool) {
+    require(amount > 0 && !frozenAccount[recipient]);
 
     tokenLedger.transfer(msg.sender, recipient, amount);
     emit Transfer(msg.sender, recipient, amount);
@@ -198,7 +188,10 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function mintTokens(uint256 mintedAmount) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function mintTokens(uint256 mintedAmount) public onlySuperAdmins returns (bool) {
+    require(mintedAmount.add(totalSupply()) <= tokenMaxCap);
+    require(mintedAmount > 0);
+
     uint256 _circulationCap = externalStorage.getCirculationCap();
     tokenLedger.mintTokens(mintedAmount);
 
@@ -209,8 +202,8 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function grantTokens(address recipient, uint256 amount) public onlySuperAdmins unlessUpgraded returns (bool) {
-    require(amount <= tokensAvailable());
+  function grantTokens(address recipient, uint256 amount) public onlySuperAdmins returns (bool) {
+    require(amount <= tokensAvailable()); // assert the granted tokens doesnt exceed the totalSupply minus the fully vested amount of vesting tokens
     require(!frozenAccount[recipient]);
 
     tokenLedger.debitAccount(recipient, amount);
@@ -219,7 +212,7 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function setHaltPurchase(bool _haltPurchase) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function setHaltPurchase(bool _haltPurchase) public onlySuperAdmins returns (bool) {
     haltPurchase = _haltPurchase;
 
     if (_haltPurchase) {
@@ -230,7 +223,7 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function buy() external payable unlessFrozen unlessUpgraded returns (uint256) {
+  function buy() external payable unlessFrozen returns (uint256) {
     require(!haltPurchase);
     require(externalStorage.getApprovedBuyer(msg.sender));
 
@@ -272,20 +265,19 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function foundationDeposit() public payable unlessUpgraded returns (bool) {
+  function foundationDeposit() public payable returns (bool) {
     return true;
   }
 
-  function allowance(address owner, address spender) public view unlessUpgraded returns (uint256) {
-    return externalStorage.getAllowance(owner, spender);
+  function allowance(address _owner, address _spender) public view returns (uint256) {
+    return externalStorage.getAllowance(_owner, _spender);
   }
 
-  function transferFrom(address from, address to, uint256 value) public unlessFrozen unlessUpgraded returns (bool) {
-    require(allowTransfers);
-    require(!frozenAccount[from]);
-    require(!frozenAccount[to]);
-    require(from != msg.sender);
-    require(value > 0);
+  function transferFrom(address from, address to, uint256 value) public unlessFrozen returns (bool) {
+    require(!frozenAccount[from] &&
+            !frozenAccount[to] &&
+            from != msg.sender &&
+            value > 0);
 
     uint256 allowanceValue = allowance(from, msg.sender);
     require(allowanceValue >= value);
@@ -304,10 +296,10 @@ contract CardStackToken is ERC20,
    *
    * Please use `increaseApproval` or `decreaseApproval` instead.
    */
-  function approve(address spender, uint256 value) public unlessFrozen unlessUpgraded returns (bool) {
-    require(spender != address(0));
-    require(!frozenAccount[spender]);
-    require(msg.sender != spender);
+  function approve(address spender, uint256 value) public unlessFrozen returns (bool) {
+    require(spender != address(0) &&
+            !frozenAccount[spender] && 
+            msg.sender != spender);
 
     externalStorage.setAllowance(msg.sender, spender, value);
 
@@ -315,11 +307,11 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function increaseApproval(address spender, uint256 addedValue) public unlessFrozen unlessUpgraded returns (bool) {
+  function increaseApproval(address spender, uint256 addedValue) public unlessFrozen returns (bool) {
     return approve(spender, externalStorage.getAllowance(msg.sender, spender).add(addedValue));
   }
 
-  function decreaseApproval(address spender, uint256 subtractedValue) public unlessFrozen unlessUpgraded returns (bool) {
+  function decreaseApproval(address spender, uint256 subtractedValue) public unlessFrozen returns (bool) {
     uint256 oldValue = externalStorage.getAllowance(msg.sender, spender);
 
     if (subtractedValue > oldValue) {
@@ -334,7 +326,7 @@ contract CardStackToken is ERC20,
                              uint256 startDate, // 0 indicates start "now"
                              uint256 cliffSec,
                              uint256 durationSec,
-                             bool isRevocable) public onlySuperAdmins unlessUpgraded returns(bool) {
+                             bool isRevocable) public onlySuperAdmins returns(bool) {
 
     uint256 _circulationCap = externalStorage.getCirculationCap();
 
@@ -364,7 +356,7 @@ contract CardStackToken is ERC20,
   }
 
 
-  function revokeVesting(address beneficiary) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function revokeVesting(address beneficiary) public onlySuperAdmins returns (bool) {
     require(beneficiary != address(0));
     externalStorage.revokeVesting(beneficiary);
 
@@ -375,11 +367,11 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function releaseVestedTokens() public unlessFrozen unlessUpgraded returns (bool) {
+  function releaseVestedTokens() public unlessFrozen returns (bool) {
     return releaseVestedTokensForBeneficiary(msg.sender);
   }
 
-  function releaseVestedTokensForBeneficiary(address beneficiary) public unlessFrozen unlessUpgraded returns (bool) {
+  function releaseVestedTokensForBeneficiary(address beneficiary) public unlessFrozen returns (bool) {
     require(beneficiary != address(0));
     require(!frozenAccount[beneficiary]);
 
@@ -397,32 +389,32 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function releasableAmount(address beneficiary) public view unlessUpgraded returns (uint256) {
+  function releasableAmount(address beneficiary) public view returns (uint256) {
     return externalStorage.releasableAmount(beneficiary);
   }
 
-  function totalUnvestedAndUnreleasedTokens() public view unlessUpgraded returns (uint256) {
+  function totalUnvestedAndUnreleasedTokens() public view returns (uint256) {
     return externalStorage.getTotalUnvestedAndUnreleasedTokens();
   }
 
-  function vestingMappingSize() public view unlessUpgraded returns (uint256) {
+  function vestingMappingSize() public view returns (uint256) {
     return externalStorage.vestingMappingSize();
   }
 
-  function vestingBeneficiaryForIndex(uint256 index) public view unlessUpgraded returns (address) {
+  function vestingBeneficiaryForIndex(uint256 index) public view returns (address) {
     return externalStorage.vestingBeneficiaryForIndex(index);
   }
 
   function vestingSchedule(address _beneficiary) public
-                                                 view unlessUpgraded returns (uint256 startDate,
-                                                                              uint256 cliffDate,
-                                                                              uint256 durationSec,
-                                                                              uint256 fullyVestedAmount,
-                                                                              uint256 vestedAmount,
-                                                                              uint256 vestedAvailableAmount,
-                                                                              uint256 releasedAmount,
-                                                                              uint256 revokeDate,
-                                                                              bool isRevocable) {
+                                                 view returns (uint256 startDate,
+                                                               uint256 cliffDate,
+                                                               uint256 durationSec,
+                                                               uint256 fullyVestedAmount,
+                                                               uint256 vestedAmount,
+                                                               uint256 vestedAvailableAmount,
+                                                               uint256 releasedAmount,
+                                                               uint256 revokeDate,
+                                                               bool isRevocable) {
     (
       startDate,
       cliffDate,
@@ -449,7 +441,7 @@ contract CardStackToken is ERC20,
     return externalStorage.getCustomBuyerForIndex(index);
   }
 
-  function setCustomBuyer(address buyer, uint256 balanceLimit) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function setCustomBuyer(address buyer, uint256 balanceLimit) public onlySuperAdmins returns (bool) {
     require(buyer != address(0));
     externalStorage.setCustomBuyerLimit(buyer, balanceLimit);
     addBuyer(buyer);
@@ -457,12 +449,7 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function setAllowTransfers(bool _allowTransfers) public onlySuperAdmins unlessUpgraded returns (bool) {
-    allowTransfers = _allowTransfers;
-    return true;
-  }
-
-  function setContributionMinimum(uint256 _contributionMinimum) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function setContributionMinimum(uint256 _contributionMinimum) public onlySuperAdmins returns (bool) {
     contributionMinimum = _contributionMinimum;
     return true;
   }
@@ -479,7 +466,7 @@ contract CardStackToken is ERC20,
     return externalStorage.getApprovedBuyerForIndex(index);
   }
 
-  function addBuyer(address buyer) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function addBuyer(address buyer) public onlySuperAdmins returns (bool) {
     require(buyer != address(0));
     externalStorage.setApprovedBuyer(buyer, true);
 
@@ -493,24 +480,9 @@ contract CardStackToken is ERC20,
     return true;
   }
 
-  function removeBuyer(address buyer) public onlySuperAdmins unlessUpgraded returns (bool) {
+  function removeBuyer(address buyer) public onlySuperAdmins returns (bool) {
     require(buyer != address(0));
     externalStorage.setApprovedBuyer(buyer, false);
-
-    return true;
-  }
-
-  function totalTransferWhitelistMapping() public view returns (uint256) {
-    return whitelistedTransfererForIndex.length;
-  }
-
-  function setWhitelistedTransferer(address transferer, bool _allowTransfers) public onlySuperAdmins unlessUpgraded returns (bool) {
-    require(transferer != address(0));
-    whitelistedTransferer[transferer] = _allowTransfers;
-    if (!processedWhitelistedTransferer[transferer]) {
-      whitelistedTransfererForIndex.push(transferer);
-      processedWhitelistedTransferer[transferer] = true;
-    }
 
     return true;
   }

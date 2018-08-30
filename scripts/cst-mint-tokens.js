@@ -2,7 +2,7 @@ const { CST_NAME } = require("../lib/constants");
 const commandLineArgs = require('command-line-args');
 const getUsage = require('command-line-usage');
 
-let CardStackToken = artifacts.require("./CardStackToken.sol");
+let CardstackToken = artifacts.require("./CardstackToken.sol");
 let RegistryContract = artifacts.require("./Registry.sol");
 
 function adjustForDecimals(value, decimals) {
@@ -50,7 +50,7 @@ module.exports = async function(callback) {
   console.log(`Using registry at ${registry.address}`);
   let cstAddress = await registry.contractForHash(web3.sha3(CST_NAME));
 
-  let cst = await CardStackToken.at(cstAddress);
+  let cst = await CardstackToken.at(cstAddress);
   let symbol = await cst.symbol();
   let decimals = await cst.decimals();
 

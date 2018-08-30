@@ -6,7 +6,7 @@ const _ = require("lodash");
 const Parallel = require("async-parallel");
 
 let RegistryContract = artifacts.require("./Registry.sol");
-let CardStackToken = artifacts.require("./CardStackToken.sol");
+let CardstackToken = artifacts.require("./CardstackToken.sol");
 
 function displayBigNumber(number) {
   let precision = 50;
@@ -48,7 +48,7 @@ module.exports = async function(callback) {
   console.log(`Using registry at ${registry.address}`);
   let cstAddress = await registry.contractForHash(web3.sha3(CST_NAME));
 
-  let cst = await CardStackToken.at(cstAddress);
+  let cst = await CardstackToken.at(cstAddress);
   let decimals = await cst.decimals();
   let decimalsFactor = new web3.BigNumber('1'.padEnd(decimals.toNumber() + 1, '0'));
 

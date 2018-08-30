@@ -1,7 +1,8 @@
-const CardStackToken = artifacts.require("./CardStackToken.sol");
+const CardstackToken = artifacts.require("./CardstackToken.sol");
 const CstLedger = artifacts.require("./CstLedger.sol");
 const Storage = artifacts.require("./ExternalStorage.sol");
 const Registry = artifacts.require("./Registry.sol");
+const { proxyContract } = require('./utils');
 const {
   NULL_ADDRESS,
   CST_DEPLOY_GAS_LIMIT,
@@ -10,7 +11,8 @@ const {
   asInt
 } = require("../lib/utils");
 
-contract('CardStackToken', function(accounts) {
+contract('CardstackToken', function(accounts) {
+  let proxyAdmin = accounts[41];
 
   describe("allowance", function() {
     let cst;
@@ -24,20 +26,19 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await ledger.mintTokens(100);
       await ledger.debitAccount(grantor, 50);
       await cst.configure(web3.toHex("CardStack Token"), web3.toHex("CST"), web3.toWei(0.1, "ether"), 100, 1000000, NULL_ADDRESS);
-      await cst.setAllowTransfers(true);
     });
 
     it("allows account to increase the allowance for a spender", async function() {
@@ -194,18 +195,5 @@ contract('CardStackToken', function(accounts) {
       assert.equal(asInt(recipientBalance), 0, "the balance is correct");
     });
 
-    it("should not be able to transferFrom when allowTransfers is false", async function() {
-      await cst.setAllowTransfers(false);
-      await cst.approve(spender, 10, { from: grantor });
-      await assertRevert(async () => await cst.transferFrom(grantor, recipient, 10, { from: spender }));
-
-      let grantorBalance = await cst.balanceOf(grantor);
-      let recipientBalance = await cst.balanceOf(recipient);
-      let allowance = await cst.allowance(grantor, spender);
-
-      assert.equal(asInt(allowance), 10, "the allowance is correct");
-      assert.equal(asInt(grantorBalance), 50, "the balance is correct");
-      assert.equal(asInt(recipientBalance), 0, "the balance is correct");
-    });
   });
 });

@@ -1,8 +1,9 @@
-const CardStackToken = artifacts.require("./CardStackToken.sol");
+const CardstackToken = artifacts.require("./CardstackToken.sol");
 const CstLedger = artifacts.require("./CstLedger.sol");
 const Storage = artifacts.require("./ExternalStorage.sol");
 const Registry = artifacts.require("./Registry.sol");
 const { increaseTimeTo, duration, latestTime } = require("../lib/time.js");
+const { proxyContract } = require('./utils');
 const {
   NULL_ADDRESS,
   CST_DEPLOY_GAS_LIMIT,
@@ -10,7 +11,8 @@ const {
   assertRevert
 } = require("../lib/utils");
 
-contract('CardStackToken', function(accounts) {
+contract('CardstackToken', function(accounts) {
+  let proxyAdmin = accounts[41];
 
   describe("vested tokens", function() {
     let cst;
@@ -25,14 +27,14 @@ contract('CardStackToken', function(accounts) {
 
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await ledger.mintTokens(100);

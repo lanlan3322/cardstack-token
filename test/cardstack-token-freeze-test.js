@@ -1,3 +1,4 @@
+const { proxyContract } = require('./utils');
 const {
   GAS_PRICE,
   MAX_FAILED_TXN_GAS,
@@ -10,17 +11,18 @@ const {
 } = require("../lib/utils");
 const { increaseTimeTo, duration, latestTime } = require("../lib/time.js");
 
-const CardStackToken = artifacts.require("./CardStackToken.sol");
+const CardstackToken = artifacts.require("./CardstackToken.sol");
 const CstLedger = artifacts.require("./CstLedger.sol");
 const Storage = artifacts.require("./ExternalStorage.sol");
 const Registry = artifacts.require("./Registry.sol");
 
-contract('CardStackToken', function(accounts) {
+contract('CardstackToken', function(accounts) {
   let ledger;
   let storage;
   let cst;
   let registry;
   let superAdmin = accounts[20];
+  let proxyAdmin = accounts[41];
 
   describe("frozen account", function() {
     let frozenAccount = accounts[5];
@@ -29,14 +31,14 @@ contract('CardStackToken', function(accounts) {
       this.start = await latestTime() + duration.minutes(1);
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -46,7 +48,6 @@ contract('CardStackToken', function(accounts) {
 
       await checkBalance(frozenAccount, 1);
       await cst.addBuyer(frozenAccount);
-      await cst.setAllowTransfers(true);
       await cst.buy({
         from: frozenAccount,
         value: web3.toWei(1, "ether"),
@@ -165,7 +166,6 @@ contract('CardStackToken', function(accounts) {
         gasPrice: GAS_PRICE
       });
 
-      // console.log("TXN", JSON.stringify(txn, null, 2));
       assert.ok(txn.receipt);
       assert.ok(txn.logs);
 
@@ -364,14 +364,14 @@ contract('CardStackToken', function(accounts) {
       this.start = await latestTime() + duration.minutes(1);
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
 
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
@@ -379,7 +379,6 @@ contract('CardStackToken', function(accounts) {
       await ledger.mintTokens(web3.toWei(100, 'ether'));
       await cst.configure(web3.toHex("CardStack Token"), web3.toHex("CST"), 10, web3.toWei(100, 'ether'), web3.toWei(1000000, 'ether'), NULL_ADDRESS);
 
-      await cst.setAllowTransfers(true);
       await checkBalance(frozenAccount, 1);
 
       await cst.addBuyer(frozenAccount);

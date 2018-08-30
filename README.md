@@ -53,11 +53,11 @@ Then execute:
 WALLET=<wallet address> truffle migrate --reset --network=testrpc
 ```
 
-Make a note of the address of the `Registry` and of the `CardStackToken` contract. Make sure not to lose the address of the Registry, the registry address is specified as a parameter for all contract ops commands.
+Make a note of the address of the `Registry` and of the `CardstackToken` contract. Make sure not to lose the address of the Registry, the registry address is specified as a parameter for all contract ops commands.
 
-Register the `CardStackToken` contract with the `Registry`:
+Register the `CardstackToken` contract with the `Registry`:
 ```
-WALLET=<wallet address> truffle exec ./scripts/cst-register.js --cst=<CardStackToken's address> --registry=<Registry's address> --network=testrpc
+WALLET=<wallet address> truffle exec ./scripts/cst-register.js --cst=<CardstackToken's address> --registry=<Registry's address> --network=testrpc
 ```
 
 You can view the CST system info by executing:
@@ -110,10 +110,10 @@ WALLET=<wallet address> truffle migrate --reset --network=rinkeby
 ```
 The deploy will make many minutes to run depending on Rinkeby network stats and gas price.
 
-Make a note of the address of the Registry and of the CardStackToken contract. Make sure not to lose the address of the Registry, the registry address is specified as a parameter for all contract ops commands.
-Register the `CardStackToken` contract with the `Registry`:
+Make a note of the address of the Registry and of the CardstackToken contract. Make sure not to lose the address of the Registry, the registry address is specified as a parameter for all contract ops commands.
+Register the `CardstackToken` contract with the `Registry`:
 ```
-WALLET=<wallet address> truffle exec ./scripts/cst-register.js --cst=<CardStackToken's address> --registry=<Registry's address> --network=rinkeby
+WALLET=<wallet address> truffle exec ./scripts/cst-register.js --cst=<CardstackToken's address> --registry=<Registry's address> --network=rinkeby
 ```
 
 You can view the CST system info by executing:

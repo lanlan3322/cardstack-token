@@ -1,3 +1,4 @@
+const { proxyContract } = require('./utils');
 const {
   GAS_PRICE,
   MAX_FAILED_TXN_GAS,
@@ -11,22 +12,23 @@ const {
 } = require("../lib/utils");
 
 const Registry = artifacts.require("./Registry.sol");
-const CardStackToken = artifacts.require("./CardStackToken.sol");
+const CardstackToken = artifacts.require("./CardstackToken.sol");
 const CstLedger = artifacts.require("./CstLedger.sol");
 const Storage = artifacts.require("./ExternalStorage.sol");
 
-contract('CardStackToken', function(accounts) {
+contract('CardstackToken', function(accounts) {
   let ledger;
   let storage;
   let registry;
   let cst;
   let superAdmin = accounts[42];
+  let proxyAdmin = accounts[41];
 
   describe("create contract", function() {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
@@ -35,17 +37,16 @@ contract('CardStackToken', function(accounts) {
       await storage.setBytes32Value("cstTokenSymbol", web3.toHex("CST"));
       await storage.setUIntValue("cstBuyPrice", web3.toWei(0.1, "ether"));
       await storage.setUIntValue("cstCirculationCap", 100);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
 
       let isRegistrySuperAdmin = await cst.superAdmins(registry.address);
       let superAdminCount = await cst.totalSuperAdminsMapping();
-      let firstSuperAdmin = await cst.superAdminsForIndex(0);
+      let lastSuperAdmin = await cst.superAdminsForIndex(superAdminCount - 1);
 
       assert.ok(isRegistrySuperAdmin, "the registry is the super admin for the cst contract");
-      assert.equal(superAdminCount, 1, "the super admin count is correct for the cst contract");
-      assert.equal(firstSuperAdmin, registry.address, "the super admin by index is correct for the cst contract");
+      assert.equal(lastSuperAdmin, registry.address, "the super admin by index is correct for the cst contract");
 
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
@@ -93,7 +94,6 @@ contract('CardStackToken', function(accounts) {
       assert.equal(storageBuyPrice.toNumber(), 2, "external storage is updated");
       assert.equal(storageCirculationCap.toNumber(), 8000, "external storage is updated");
 
-      // console.log(JSON.stringify(txn, null, 2));
       assert.equal(txn.logs.length, 1, "the correct number of events were fired");
       let event = txn.logs[0];
       assert.equal(event.event, "ConfigChanged", "the event name is correct");
@@ -349,14 +349,14 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -399,14 +399,14 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -419,7 +419,6 @@ contract('CardStackToken', function(accounts) {
         from: superAdmin
       });
 
-      // console.log("TXN", JSON.stringify(txn, null, 2));
       assert.ok(txn.receipt);
       assert.ok(txn.logs);
 
@@ -459,20 +458,48 @@ contract('CardStackToken', function(accounts) {
       assert.equal(asInt(totalTokens), 100, "The totalTokens is correct");
       assert.equal(asInt(totalInCirculation), 0, "The totalInCirculation is correct");
     });
+
+    it("does not allow more than 6,000,000,000 * 10^18 tokens to be minted", async function() {
+      await ledger.mintTokens(6000000000000000000000000000);
+
+      await assertRevert(async () => await cst.mintTokens(1, {
+        from: superAdmin
+      }));
+
+      let totalTokens = await cst.totalSupply();
+      let totalInCirculation = await cst.totalInCirculation();
+
+      assert.equal(asInt(totalTokens), 6000000000000000000000000000, "The totalTokens is correct");
+      assert.equal(asInt(totalInCirculation), 0, "The totalInCirculation is correct");
+    });
+
+    it("does not allow 0 tokens to be minted", async function() {
+      await ledger.mintTokens(100);
+
+      await assertRevert(async () => await cst.mintTokens(0, {
+        from: superAdmin
+      }));
+
+      let totalTokens = await cst.totalSupply();
+      let totalInCirculation = await cst.totalInCirculation();
+
+      assert.equal(asInt(totalTokens), 100, "The totalTokens is correct");
+      assert.equal(asInt(totalInCirculation), 0, "The totalInCirculation is correct");
+    });
   });
 
   describe("grantTokens()", function() {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -550,7 +577,7 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
@@ -559,9 +586,9 @@ contract('CardStackToken', function(accounts) {
       await storage.setBytes32Value("cstTokenSymbol", web3.toHex("CST"));
       await storage.setUIntValue("cstBuyPrice", 10);
       await storage.setUIntValue("cstCirculationCap", web3.toWei(1000));
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -685,7 +712,7 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
@@ -694,9 +721,9 @@ contract('CardStackToken', function(accounts) {
       await storage.setBytes32Value("cstTokenSymbol", web3.toHex("CST"));
       await storage.setUIntValue("cstBuyPrice", web3.toWei(0.1, "ether"));
       await storage.setUIntValue("cstCirculationCap", 1000);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.configure(0x0, 0x0, web3.toWei(0.1, "ether"), 1000, 1000000, 0x0);
@@ -765,14 +792,14 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.addSuperAdmin(superAdmin);
@@ -798,44 +825,6 @@ contract('CardStackToken', function(accounts) {
     });
   });
 
-  describe("setAllowTransfers", function() {
-    beforeEach(async function() {
-      ledger = await CstLedger.new();
-      storage = await Storage.new();
-      registry = await Registry.new();
-      await registry.addStorage("cstStorage", storage.address);
-      await registry.addStorage("cstLedger", ledger.address);
-      await storage.addSuperAdmin(registry.address);
-      await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
-        gas: CST_DEPLOY_GAS_LIMIT
-      });
-      await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
-      await cst.freezeToken(false);
-      await cst.addSuperAdmin(superAdmin);
-    });
-
-    it("allows super admin to call setAllowTransfers", async function() {
-      let allowTransfers = await cst.allowTransfers();
-
-      assert.notOk(allowTransfers, "transfers are not initially allowed");
-
-      await cst.setAllowTransfers(true, { from: superAdmin });
-      allowTransfers = await cst.allowTransfers();
-
-      assert.ok(allowTransfers, "super admin setAllowedTransfers to true");
-    });
-
-    it("does not allow non-super admin to call setAllowTransfers", async function() {
-      let nonSuperAdmin = accounts[33];
-
-      await assertRevert(async () => await cst.setAllowTransfers(true, { from: nonSuperAdmin }));
-
-      let allowTransfers = await cst.allowTransfers();
-      assert.notOk(allowTransfers, "setAllowTransfers is not changed by non-super admin");
-    });
-  });
-
   describe("setCustomBuyer", function() {
     let customBuyer = accounts[23];
     let approvedBuyer = accounts[17];
@@ -843,14 +832,14 @@ contract('CardStackToken', function(accounts) {
     beforeEach(async function() {
       ledger = await CstLedger.new();
       storage = await Storage.new();
-      registry = await Registry.new();
+      registry = (await proxyContract(Registry, proxyAdmin)).contract;
       await registry.addStorage("cstStorage", storage.address);
       await registry.addStorage("cstLedger", ledger.address);
       await storage.addSuperAdmin(registry.address);
       await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
+      cst = (await proxyContract(CardstackToken, proxyAdmin, registry.address, "cstStorage", "cstLedger", {
         gas: CST_DEPLOY_GAS_LIMIT
-      });
+      })).contract;
       await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
       await cst.freezeToken(false);
       await cst.configure(0x0, 0x0, web3.toWei(0.1, "ether"), 1000, 1000000, 0x0);
@@ -894,52 +883,4 @@ contract('CardStackToken', function(accounts) {
       assert.notOk(isBuyer, "the buyer is not set");
     });
   });
-
-  describe("setWhitelistedTransferer", function() {
-    let whitelistedTransferer = accounts[10];
-
-    beforeEach(async function() {
-      ledger = await CstLedger.new();
-      storage = await Storage.new();
-      registry = await Registry.new();
-      await registry.addStorage("cstStorage", storage.address);
-      await registry.addStorage("cstLedger", ledger.address);
-      await storage.addSuperAdmin(registry.address);
-      await ledger.addSuperAdmin(registry.address);
-      cst = await CardStackToken.new(registry.address, "cstStorage", "cstLedger", {
-        gas: CST_DEPLOY_GAS_LIMIT
-      });
-      await registry.register("CST", cst.address, CARDSTACK_NAMEHASH);
-      await cst.freezeToken(false);
-      await cst.configure(0x0, 0x0, web3.toWei(0.1, "ether"), 1000, 1000000, 0x0);
-      await cst.addSuperAdmin(superAdmin);
-    });
-
-    it("should allow super admin to set whitelisted transferer", async function() {
-      let totalWhitelistedTransferers = await cst.totalTransferWhitelistMapping();
-
-      assert.equal(totalWhitelistedTransferers, 0, 'the total whitelisted transferers is correct');
-
-      await cst.setWhitelistedTransferer(whitelistedTransferer, true, { from: superAdmin });
-
-      totalWhitelistedTransferers = await cst.totalTransferWhitelistMapping();
-      let isWhitelistedTransferer = await cst.whitelistedTransferer(whitelistedTransferer);
-      let firstWhitelistedTransferer = await cst.whitelistedTransfererForIndex(0);
-
-      assert.equal(totalWhitelistedTransferers, 1, 'the total whitelisted transferers is correct');
-      assert.ok(isWhitelistedTransferer, "the whitelisted transferer is set");
-      assert.equal(firstWhitelistedTransferer, whitelistedTransferer, "the whitelistedTransfererForIndex is correct");
-    });
-
-    it("should not allow non-super admin to set whitelisted transferer", async function() {
-      await assertRevert(async () => await cst.setWhitelistedTransferer(whitelistedTransferer, true, { from: whitelistedTransferer }));
-
-      let totalWhitelistedTransferers = await cst.totalTransferWhitelistMapping();
-      let isWhitelistedTransferer = await cst.whitelistedTransferer(whitelistedTransferer);
-
-      assert.equal(totalWhitelistedTransferers.toNumber(), 0, 'the totalTransferWhitelistMapping is correct');
-      assert.notOk(isWhitelistedTransferer, "the whitelisted transferer is not set");
-    });
-  });
-
 });
